@@ -621,20 +621,33 @@ _display_identity() {
 
     log_info "Extracting validator identity from key..."
 
-    # Extract validator address (the Ethereum address used for QBFT voting)
-    # - Redirect stdin from /dev/null so Besu JVM doesn't consume piped input
-    # - Redirect stderr to /dev/null to discard ANSI-colored log lines
-    # - The address is the LAST line of stdout, starting with 0x
-    local validator_address=""
-    validator_address=$("${BESU_INSTALL_DIR}/bin/besu" public-key export-address \
-        --node-private-key-file="${nodekey_file}" < /dev/null 2>/dev/null \
-        | tail -1 | tr -d '[:space:]') || true
+    # Use temp files to avoid pipe/stdin issues with the JVM.
+    # Besu writes the address/key to stdout, logs to stderr.
+    local tmp_addr="/tmp/qelt_addr_$$.txt"
+    local tmp_pubkey="/tmp/qelt_pubkey_$$.txt"
 
-    # Extract public key (for enode URL construction)
+    # Extract validator address
+    "${BESU_INSTALL_DIR}/bin/besu" public-key export-address \
+        --node-private-key-file="${nodekey_file}" \
+        > "${tmp_addr}" 2>/dev/null || true
+
+    # Extract public key
+    "${BESU_INSTALL_DIR}/bin/besu" public-key export \
+        --node-private-key-file="${nodekey_file}" \
+        > "${tmp_pubkey}" 2>/dev/null || true
+
+    # Read results — the address/key is the last line of the file
+    local validator_address=""
+    if [[ -f "${tmp_addr}" ]]; then
+        validator_address=$(tail -1 "${tmp_addr}" | tr -d '[:space:]')
+    fi
     local public_key=""
-    public_key=$("${BESU_INSTALL_DIR}/bin/besu" public-key export \
-        --node-private-key-file="${nodekey_file}" < /dev/null 2>/dev/null \
-        | tail -1 | tr -d '[:space:]') || true
+    if [[ -f "${tmp_pubkey}" ]]; then
+        public_key=$(tail -1 "${tmp_pubkey}" | tr -d '[:space:]')
+    fi
+
+    # Cleanup temp files
+    rm -f "${tmp_addr}" "${tmp_pubkey}"
 
     if [[ -z "${validator_address}" || ! "${validator_address}" =~ ^0x ]]; then
         log_warn "Could not extract validator address from key."
