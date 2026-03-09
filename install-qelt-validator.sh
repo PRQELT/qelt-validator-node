@@ -615,14 +615,20 @@ _display_identity() {
     local nodekey_file="$1"
 
     # Extract validator address (the Ethereum address used for QBFT voting)
+    # Redirect stdin from /dev/null so Besu JVM doesn't consume piped input
     local validator_address
     validator_address=$("${BESU_INSTALL_DIR}/bin/besu" public-key export-address \
-        --node-private-key-file="${nodekey_file}" 2>/dev/null | grep "^0x" | head -1)
+        --node-private-key-file="${nodekey_file}" < /dev/null 2>/dev/null | grep "^0x" | head -1) || true
 
     # Extract public key (for enode URL construction)
     local public_key
     public_key=$("${BESU_INSTALL_DIR}/bin/besu" public-key export \
-        --node-private-key-file="${nodekey_file}" 2>/dev/null | grep "^0x" | head -1)
+        --node-private-key-file="${nodekey_file}" < /dev/null 2>/dev/null | grep "^0x" | head -1) || true
+
+    if [[ -z "${validator_address}" ]]; then
+        log_warn "Could not extract validator address from key. You can retrieve it later with:"
+        log_warn "  besu public-key export-address --node-private-key-file=${nodekey_file}"
+    fi
 
     # Remove 0x prefix for enode URL
     local pubkey_hex="${public_key#0x}"
