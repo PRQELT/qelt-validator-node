@@ -549,20 +549,22 @@ _generate_new_key() {
     log_info "Generating new secp256k1 private key..."
 
     # Use openssl to generate a cryptographically secure 32-byte private key.
-    # This is the correct, dependency-free method. The output is 64 hex chars
-    # (no 0x prefix) — exactly what Besu expects in the nodekey file.
-    openssl rand -hex 32 > "${nodekey_file}"
+    # Production nodekey uses 0x prefix format (confirmed from bootnode).
+    # Use printf to write without trailing newline for clean Besu parsing.
+    local raw_hex
+    raw_hex=$(openssl rand -hex 32)
+    printf '0x%s' "${raw_hex}" > "${nodekey_file}"
 
     if [[ ! -f "${nodekey_file}" ]]; then
         log_error "Key generation failed. The nodekey file was not created."
         exit 1
     fi
 
-    # Validate we got exactly 64 hex characters (+ newline)
+    # Validate key content
     local key_content
-    key_content=$(tr -d '[:space:]' < "${nodekey_file}")
-    if ! echo "${key_content}" | grep -qE '^[0-9a-fA-F]{64}$'; then
-        log_error "Generated key has unexpected format. Got ${#key_content} chars, expected 64."
+    key_content=$(cat "${nodekey_file}")
+    if ! echo "${key_content}" | grep -qE '^0x[0-9a-fA-F]{64}$'; then
+        log_error "Generated key has unexpected format: ${key_content:0:10}..."
         exit 1
     fi
 
@@ -616,18 +618,24 @@ _display_identity() {
 
     # Extract validator address (the Ethereum address used for QBFT voting)
     # Redirect stdin from /dev/null so Besu JVM doesn't consume piped input
-    local validator_address
-    validator_address=$("${BESU_INSTALL_DIR}/bin/besu" public-key export-address \
-        --node-private-key-file="${nodekey_file}" < /dev/null 2>/dev/null | grep "^0x" | head -1) || true
+    local validator_address=""
+    local besu_output=""
+    besu_output=$("${BESU_INSTALL_DIR}/bin/besu" public-key export-address \
+        --node-private-key-file="${nodekey_file}" < /dev/null 2>&1) || true
+    validator_address=$(echo "${besu_output}" | grep "^0x" | head -1)
 
     # Extract public key (for enode URL construction)
-    local public_key
-    public_key=$("${BESU_INSTALL_DIR}/bin/besu" public-key export \
-        --node-private-key-file="${nodekey_file}" < /dev/null 2>/dev/null | grep "^0x" | head -1) || true
+    local public_key=""
+    besu_output=$("${BESU_INSTALL_DIR}/bin/besu" public-key export \
+        --node-private-key-file="${nodekey_file}" < /dev/null 2>&1) || true
+    public_key=$(echo "${besu_output}" | grep "^0x" | head -1)
 
     if [[ -z "${validator_address}" ]]; then
-        log_warn "Could not extract validator address from key. You can retrieve it later with:"
+        log_warn "Could not extract validator address from key."
+        log_warn "This may happen if the key format is unexpected."
+        log_warn "Retrieve it manually after installation with:"
         log_warn "  besu public-key export-address --node-private-key-file=${nodekey_file}"
+        log_info "Key file contents (first 20 chars): $(head -c 20 "${nodekey_file}")"
     fi
 
     # Remove 0x prefix for enode URL
@@ -1482,6 +1490,23 @@ print_summary() {
     echo -e "  ${RED}  Your node key (${KEYS_DIR}/nodekey) is your validator identity.${NC}"
     echo -e "  ${RED}  Back it up securely. If lost, you lose your validator slot.${NC}"
     echo -e "  ${RED}  Never share your private key with anyone.${NC}"
+    echo ""
+
+    echo -e "  ${BOLD}${GREEN}━━━ COPY THE TEXT BELOW AND EMAIL IT TO: laurent@qxmp.ai ━━━${NC}"
+    echo ""
+    echo -e "  ${BOLD}--- START COPY ---${NC}"
+    echo ""
+    echo -e "  Subject: QELT Validator Admission Request"
+    echo ""
+    echo -e "  Validator Address: ${validator_address}"
+    echo -e "  Enode URL: ${enode_url}"
+    echo -e "  Server IP: ${public_ip}"
+    echo -e "  Node is synced: [YES / NO — confirm after sync completes]"
+    echo ""
+    echo -e "  ${BOLD}--- END COPY ---${NC}"
+    echo ""
+    echo -e "  ${YELLOW}📧 Send the above to: ${BOLD}laurent@qxmp.ai${NC}"
+    echo -e "  ${YELLOW}   Once your node is fully synced, the team will coordinate the validator vote.${NC}"
     echo ""
 
     # Save a summary file for reference
