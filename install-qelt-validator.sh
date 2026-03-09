@@ -18,7 +18,11 @@
 #                                                                             #
 #  Copyright 2026 QELT Network   |   License: MIT                            #
 ###############################################################################
-set -euo pipefail
+# NOTE: We intentionally do NOT use 'set -e' (errexit) because this is an
+# interactive installer with many commands that legitimately return non-zero
+# (grep not matching, curl timeouts, besu CLI tools, etc.). Instead, we handle
+# all critical errors explicitly with 'log_error; exit 1'.
+set -uo pipefail
 IFS=$'\n\t'
 
 # =============================================================================
@@ -177,7 +181,7 @@ preflight_checks() {
     ram_mb=$(awk '/MemTotal/ {printf "%.0f", $2/1024}' /proc/meminfo)
     if [[ ${ram_mb} -lt ${MIN_RAM_MB} ]]; then
         log_error "Insufficient RAM: ${ram_mb} MB. Minimum required: 8 GB (${MIN_RAM_MB} MB)."
-        ((failures++))
+        failures=$((failures + 1))
     else
         log_ok "RAM: ${ram_mb} MB"
     fi
@@ -191,7 +195,7 @@ preflight_checks() {
     disk_avail_gb=$(df -BG "${disk_target}" | awk 'NR==2 {gsub(/G/,"",$4); print $4}')
     if [[ ${disk_avail_gb} -lt ${MIN_DISK_GB} ]]; then
         log_error "Insufficient disk space: ${disk_avail_gb} GB available on ${disk_target}. Minimum: ${MIN_DISK_GB} GB."
-        ((failures++))
+        failures=$((failures + 1))
     else
         log_ok "Disk: ${disk_avail_gb} GB available on ${disk_target}"
     fi
@@ -199,7 +203,7 @@ preflight_checks() {
     # Port 30303 check
     if ss -tlnp 2>/dev/null | grep -q ":${REQUIRED_PORT} " || ss -ulnp 2>/dev/null | grep -q ":${REQUIRED_PORT} "; then
         log_error "Port ${REQUIRED_PORT} is already in use. Another process is bound to it."
-        ((failures++))
+        failures=$((failures + 1))
     else
         log_ok "Port ${REQUIRED_PORT} is available"
     fi
