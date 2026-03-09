@@ -1,0 +1,19 @@
+# Node keys — NEVER commit actual keys
+*.key
+nodekey
+*.pem
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
+
+# Temp files
+*.tmp
+*.bak
