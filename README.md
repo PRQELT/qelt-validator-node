@@ -250,7 +250,6 @@ besu public-key export-address --node-private-key-file=/data/qelt/keys/nodekey
 | Document | Description |
 |----------|-------------|
 | [VALIDATOR_ADMISSION.md](VALIDATOR_ADMISSION.md) | Complete admission process — for both new operators and existing validators |
-| [RESEARCH_BRIEF.md](RESEARCH_BRIEF.md) | Technical research and design decisions behind the installer |
 
 ---
 
