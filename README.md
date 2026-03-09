@@ -24,80 +24,89 @@ You need a dedicated server (VPS or bare-metal) with:
 | **Network** | 100 Mbps, static IP | 1 Gbps |
 | **Ports** | **30303 TCP+UDP open inbound** | Same |
 
-### Step 2 — Download and Run the Installer
+### Step 2 — Clone the Repository and Run the Installer
 
 SSH into your server and run:
 
 ```bash
-# Download the installer
-wget https://raw.githubusercontent.com/PRQELT/qelt-validator-node/main/install-qelt-validator.sh
+# Install git if not present
+sudo apt update && sudo apt install -y git
 
-# Make it executable
+# Clone the repository
+git clone https://github.com/PRQELT/qelt-validator-node.git
+
+# Enter the directory
+cd qelt-validator-node
+
+# Make the installer executable
 chmod +x install-qelt-validator.sh
 
-# Run it (requires root)
-sudo ./install-qelt-validator.sh
+# Run the installer (requires root)
+sudo bash install-qelt-validator.sh
 ```
 
-The script is interactive and will guide you through:
-1. ✅ System checks (OS, RAM, disk, ports)
-2. ✅ Installing Java 21 + Hyperledger Besu 25.12.0
-3. ✅ Creating a secure system user + directories
-4. ✅ Deploying the QELT genesis configuration
+The script is interactive and will guide you through 10 steps:
+
+1. ✅ System checks (OS, RAM, disk, ports, bootnode connectivity)
+2. ✅ Installing Java 21 + Hyperledger Besu 25.12.0 (SHA256 verified)
+3. ✅ Creating a secure `besu` system user + directories
+4. ✅ Deploying the QELT genesis configuration (SHA256 verified)
 5. ✅ Generating (or importing) your validator key
-6. ✅ Configuring the systemd service
-7. ✅ Optional: HTTPS RPC endpoint (nginx + SSL)
-8. ✅ Firewall configuration
-9. ✅ Starting the node and verifying connectivity
+6. ✅ Extracting your validator address + enode URL
+7. ✅ Configuring the systemd service (with security hardening)
+8. ✅ Optional: HTTPS RPC endpoint (nginx + Node.js middleware + SSL)
+9. ✅ Firewall configuration (UFW)
+10. ✅ Starting the node and verifying connectivity + sync
 
 ### Step 3 — Wait for Full Sync
 
-After the installer finishes, your node needs to sync with the network. Monitor progress:
+After installation, your node needs to sync with the network. This may take several hours.
 
+**Check sync status** (returns `false` when fully synced):
 ```bash
-# Watch live logs
-sudo journalctl -u besu-qelt-validator -f
-
-# Check sync status (returns "false" when fully synced)
 curl -s -X POST --data '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id":1}' \
   http://127.0.0.1:8545 | jq .result
-
-# Check your current block height
-curl -s -X POST --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
-  http://127.0.0.1:8545 | jq -r .result
-
-# Compare with the network
-curl -s -X POST --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
-  https://mainnet.qelt.ai | jq -r .result
 ```
 
-### Step 4 — Send Your Validator Address
+**Compare your block with the network:**
+```bash
+echo "Local:   $(curl -s -X POST --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' http://127.0.0.1:8545 | jq -r .result)"
+echo "Network: $(curl -s -X POST --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' https://mainnet.qelt.ai | jq -r .result)"
+```
 
-At the end of the installation, the script displays your **Validator Address**. You can also find it anytime:
+When both numbers match, your node is fully synced.
+
+**Watch live sync progress:**
+```bash
+sudo journalctl -u besu-qelt-validator -f
+```
+
+### Step 4 — Email Your Validator Details
+
+Once synced, the installer will have shown you a ready-to-copy email template. You can also find your details at any time:
 
 ```bash
 cat /data/qelt/VALIDATOR_INFO.txt
 ```
 
-**📧 Email your Validator Address to: [laurent@qxmp.ai](mailto:laurent@qxmp.ai)**
+**📧 Send your Validator Address and Enode URL to: [laurent@qxmp.ai](mailto:laurent@qxmp.ai)**
 
-Include in your email:
-- Your **Validator Address** (e.g. `0x1234...5678`)
-- Your **Enode URL** (e.g. `enode://abc...def@YOUR_IP:30303`)
+Include:
+- Your **Validator Address** (e.g. `0x1c0dffbe7183984870283b4c1db121f4c44ba28b`)
+- Your **Enode URL** (e.g. `enode://abc...@84.247.133.98:30303`)
 - Confirmation that your node is **fully synced**
 
 ### Step 5 — Wait for Admission
 
-Once the QELT team receives your information, existing validators will vote to admit your node to the network. QBFT requires a majority vote (currently 3 of 5 existing validators).
+The QELT team will coordinate a vote among existing validators. QBFT requires a majority (currently 3 of 5 validators) to vote.
 
-You can check if you've been admitted:
-
+**Check if you've been admitted:**
 ```bash
 curl -s -X POST --data '{"jsonrpc":"2.0","method":"qbft_getValidatorsByBlockNumber","params":["latest"],"id":1}' \
   http://127.0.0.1:8545 | jq .result
 ```
 
-When your address appears in the list — **congratulations, you're a QELT validator!** Your node will begin participating in consensus automatically.
+When your address appears in the list — **congratulations, you're a QELT validator!** Your node begins participating in consensus automatically. No restart needed.
 
 ---
 
@@ -136,7 +145,7 @@ sudo systemctl restart besu-qelt-validator   # Restart
 sudo systemctl stop besu-qelt-validator      # Stop
 sudo journalctl -u besu-qelt-validator -f    # Live logs
 
-# Network queries
+# Network queries (via local RPC)
 curl -s -X POST --data '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' \
   http://127.0.0.1:8545 | jq -r .result
 
@@ -163,18 +172,18 @@ curl -s -X POST --data '{"jsonrpc":"2.0","method":"eth_syncing","params":[],"id"
 
 ---
 
-## 🔐 Security
+## 🔐 Security Features
 
 The installer implements production security best practices:
 
 - **Dedicated system user** (`besu`) — the node daemon never runs as root
 - **Systemd sandboxing** — `ProtectHome`, `ProtectSystem=strict`, `NoNewPrivileges`, `PrivateTmp`
-- **Strict key permissions** — `chmod 600` on node private key
+- **Strict key permissions** — `chmod 600` on node private key, `chmod 700` on keys directory
 - **RPC localhost-only** by default — not exposed to the internet
 - **SHA256 verification** of both the Besu binary and genesis file
-- **UFW firewall** configuration
-- **Node.js RPC middleware** (method whitelisting) if public RPC is enabled
-- **Nginx rate limiting** + security headers if HTTPS endpoint is enabled
+- **UFW firewall** configuration (30303 TCP/UDP for P2P)
+- **Node.js RPC middleware** with method whitelisting (if public RPC is enabled)
+- **Nginx rate limiting** + security headers (if HTTPS endpoint is enabled)
 
 ### ⚠️ Protect Your Node Key
 
@@ -184,12 +193,28 @@ Your node key (`/data/qelt/keys/nodekey`) is your validator identity.
 
 ---
 
-## 📖 Additional Documentation
+## 🔄 Updating
 
-| Document | Description |
-|----------|-------------|
-| [VALIDATOR_ADMISSION.md](VALIDATOR_ADMISSION.md) | Complete admission process — for both new operators and existing validators |
-| [RESEARCH_BRIEF.md](RESEARCH_BRIEF.md) | Technical research and design decisions behind the installer |
+### Updating the Installer
+```bash
+cd /root/qelt-validator-node
+git pull
+```
+
+### Updating Besu
+When a new Besu version is approved by the QELT team:
+```bash
+sudo systemctl stop besu-qelt-validator
+# Download and extract the new version (update URL)
+sudo rm -rf /opt/besu
+sudo mkdir -p /opt/besu
+sudo tar -xzf besu-NEW_VERSION.tar.gz -C /opt/besu --strip-components=1
+sudo ln -sf /opt/besu/bin/besu /usr/local/bin/besu
+besu --version  # Verify
+sudo systemctl start besu-qelt-validator
+```
+
+⚠️ **Always check Besu release notes for breaking changes before upgrading.**
 
 ---
 
@@ -199,18 +224,33 @@ Your node key (`/data/qelt/keys/nodekey`) is your validator identity.
 ```bash
 sudo journalctl -u besu-qelt-validator --no-pager -n 50
 ```
-Common causes: port 30303 in use, insufficient RAM, wrong genesis, key permissions.
+Common causes: port 30303 already in use, insufficient RAM, wrong genesis, key permissions.
 
 ### No peers connecting
 ```bash
-# Check port is open
-sudo ss -tlnp | grep 30303
-# Check bootnode reachability
-curl -s -X POST --data '{"jsonrpc":"2.0","method":"eth_chainId","params":[],"id":1}' https://mainnet.qelt.ai
+sudo ss -tlnp | grep 30303       # Check port is open
+sudo ufw status | grep 30303     # Check firewall
 ```
 
 ### Sync stuck at block 0
-Verify genesis file matches the network and bootnode enode URL is correct.
+- Verify genesis file matches: `sha256sum /etc/qelt/genesis.json` should return `fa5b3534...`
+- Check bootnode enode URL in service file
+- Ensure outbound + inbound traffic on port 30303
+
+### View your validator details
+```bash
+cat /data/qelt/VALIDATOR_INFO.txt
+besu public-key export-address --node-private-key-file=/data/qelt/keys/nodekey
+```
+
+---
+
+## 📖 Additional Documentation
+
+| Document | Description |
+|----------|-------------|
+| [VALIDATOR_ADMISSION.md](VALIDATOR_ADMISSION.md) | Complete admission process — for both new operators and existing validators |
+| [RESEARCH_BRIEF.md](RESEARCH_BRIEF.md) | Technical research and design decisions behind the installer |
 
 ---
 
