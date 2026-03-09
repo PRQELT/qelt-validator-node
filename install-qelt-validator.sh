@@ -553,22 +553,21 @@ _generate_new_key() {
     log_info "Generating new secp256k1 private key..."
 
     # Use openssl to generate a cryptographically secure 32-byte private key.
-    # Production nodekey uses 0x prefix format (confirmed from bootnode).
-    # Use printf to write without trailing newline for clean Besu parsing.
+    # Besu nodekey format: raw hex, 64 characters, NO 0x prefix, with trailing newline.
     local raw_hex
     raw_hex=$(openssl rand -hex 32)
-    printf '0x%s' "${raw_hex}" > "${nodekey_file}"
+    echo "${raw_hex}" > "${nodekey_file}"
 
     if [[ ! -f "${nodekey_file}" ]]; then
         log_error "Key generation failed. The nodekey file was not created."
         exit 1
     fi
 
-    # Validate key content
+    # Validate key content (strip whitespace for check)
     local key_content
-    key_content=$(cat "${nodekey_file}")
-    if ! echo "${key_content}" | grep -qE '^0x[0-9a-fA-F]{64}$'; then
-        log_error "Generated key has unexpected format: ${key_content:0:10}..."
+    key_content=$(tr -d '[:space:]' < "${nodekey_file}")
+    if ! echo "${key_content}" | grep -qE '^[0-9a-fA-F]{64}$'; then
+        log_error "Generated key has unexpected format: ${key_content:0:10}... (${#key_content} chars)"
         exit 1
     fi
 
@@ -683,10 +682,13 @@ configure_service() {
 
     # Detect public IP
     local public_ip
-    public_ip=$(curl -sSf --max-time 10 https://ifconfig.me 2>/dev/null \
-        || curl -sSf --max-time 10 https://api.ipify.org 2>/dev/null \
-        || curl -sSf --max-time 10 https://icanhazip.com 2>/dev/null \
+    # Force IPv4 with -4 flag to get a standard IPv4 address
+    public_ip=$(curl -4 -sSf --max-time 10 https://ifconfig.me 2>/dev/null \
+        || curl -4 -sSf --max-time 10 https://api.ipify.org 2>/dev/null \
+        || curl -4 -sSf --max-time 10 https://icanhazip.com 2>/dev/null \
         || echo "")
+    # Trim whitespace
+    public_ip=$(echo "${public_ip}" | tr -d '[:space:]')
 
     if [[ -z "${public_ip}" ]]; then
         log_warn "Could not auto-detect public IP address."
@@ -1502,10 +1504,10 @@ print_summary() {
     echo ""
     echo -e "  Subject: QELT Validator Admission Request"
     echo ""
-    echo -e "  Validator Address: ${validator_address}"
-    echo -e "  Enode URL: ${enode_url}"
+    echo -e "  Validator Address: ${validator_address:-PENDING — run: besu public-key export-address --node-private-key-file=/data/qelt/keys/nodekey}"
+    echo -e "  Enode URL: ${enode_url:-PENDING — will be available after validator address is resolved}"
     echo -e "  Server IP: ${public_ip}"
-    echo -e "  Node is synced: [YES / NO — confirm after sync completes]"
+    echo -e "  Node is synced: (Wait until your node is synced, then write YES here before sending)"
     echo ""
     echo -e "  ${BOLD}--- END COPY ---${NC}"
     echo ""
