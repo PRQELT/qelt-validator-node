@@ -619,26 +619,37 @@ _import_key() {
 _display_identity() {
     local nodekey_file="$1"
 
+    log_info "Extracting validator identity from key..."
+
     # Extract validator address (the Ethereum address used for QBFT voting)
-    # Redirect stdin from /dev/null so Besu JVM doesn't consume piped input
+    # - Redirect stdin from /dev/null so Besu JVM doesn't consume piped input
+    # - Redirect stderr to /dev/null to discard ANSI-colored log lines
+    # - The address is the LAST line of stdout, starting with 0x
     local validator_address=""
-    local besu_output=""
-    besu_output=$("${BESU_INSTALL_DIR}/bin/besu" public-key export-address \
-        --node-private-key-file="${nodekey_file}" < /dev/null 2>&1) || true
-    validator_address=$(echo "${besu_output}" | grep "^0x" | head -1)
+    validator_address=$("${BESU_INSTALL_DIR}/bin/besu" public-key export-address \
+        --node-private-key-file="${nodekey_file}" < /dev/null 2>/dev/null \
+        | tail -1 | tr -d '[:space:]') || true
 
     # Extract public key (for enode URL construction)
     local public_key=""
-    besu_output=$("${BESU_INSTALL_DIR}/bin/besu" public-key export \
-        --node-private-key-file="${nodekey_file}" < /dev/null 2>&1) || true
-    public_key=$(echo "${besu_output}" | grep "^0x" | head -1)
+    public_key=$("${BESU_INSTALL_DIR}/bin/besu" public-key export \
+        --node-private-key-file="${nodekey_file}" < /dev/null 2>/dev/null \
+        | tail -1 | tr -d '[:space:]') || true
 
-    if [[ -z "${validator_address}" ]]; then
+    if [[ -z "${validator_address}" || ! "${validator_address}" =~ ^0x ]]; then
         log_warn "Could not extract validator address from key."
-        log_warn "This may happen if the key format is unexpected."
-        log_warn "Retrieve it manually after installation with:"
+        log_warn "Retrieve it manually with:"
         log_warn "  besu public-key export-address --node-private-key-file=${nodekey_file}"
-        log_info "Key file contents (first 20 chars): $(head -c 20 "${nodekey_file}")"
+        validator_address=""
+    else
+        log_ok "Validator address: ${validator_address}"
+    fi
+
+    if [[ -z "${public_key}" || ! "${public_key}" =~ ^0x ]]; then
+        log_warn "Could not extract public key."
+        public_key=""
+    else
+        log_ok "Public key extracted"
     fi
 
     # Remove 0x prefix for enode URL
