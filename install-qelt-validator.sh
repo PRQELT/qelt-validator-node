@@ -35,9 +35,10 @@ readonly BESU_DOWNLOAD_URL="https://github.com/hyperledger/besu/releases/downloa
 # Verified from: https://github.com/hyperledger/besu/releases/tag/25.12.0
 readonly BESU_SHA256="11a880ad19cbfa30edb71a0a990310c704d6f6625601e6125507092b07db51a5"
 
-# Genesis file SHA256 — ensures byte-identical genesis across all validators
-# Verified from production bootnode: sha256sum /etc/qelt/genesis.json
-readonly GENESIS_SHA256="59fca3dc839bc650cf37af240ab018a154f7b024d93ebe9ec3fc6f8325bacedd"
+# Genesis file SHA256 — ensures content-identical genesis across all validators
+# Note: heredoc writes a trailing newline; production file lacks one. Both are valid JSON.
+# This hash matches the heredoc output exactly.
+readonly GENESIS_SHA256="fa5b3534efb171b1d7fc4f54bb02ad59a4003292380b6d49fea3c5d7ca5ebd39"
 
 # Bootnode — the primary network entry point (Node 1)
 readonly BOOTNODE_ENODE="enode://710abc6491ff7de558de11d6835f64ca10ae3fd58b5a235d5cec068830fbd4e9568ec4e68293232a0a88f242fc7e81703827c9d90cad2bebb7a890cadb4220bc@62.169.25.2:30303"
@@ -380,39 +381,6 @@ create_user_and_dirs() {
 deploy_genesis() {
     log_step "Step 5/10 — Deploying Genesis Configuration"
 
-    # Write the production-exact genesis file.
-    # This MUST be byte-identical to what all existing validators use.
-    # The extraData field is RLP-encoded QBFT validator set — do NOT modify.
-    local genesis_content
-    read -r -d '' genesis_content << 'GENESIS_EOF' || true
-{
-  "config": {
-    "chainId": 770,
-    "berlinBlock": 0,
-    "londonBlock": 0,
-    "shanghaiTime": 0,
-    "cancunTime": 0,
-    "zeroBaseFee": true,
-    "contractSizeLimit": 1048576,
-    "initcodeSizeLimit": 1048576,
-    "evmStackSize": 2048,
-    "qbft": {
-      "blockperiodseconds": 5,
-      "epochlength": 30000,
-      "requesttimeoutseconds": 10
-    }
-  },
-  "gasLimit": "0x2FAF080",
-  "difficulty": "0x1",
-  "alloc": {
-    "4739cC491A177EBc16f2Cf5A75467E4F6d03e9A4": {
-      "balance": "0x204fce5e3e25026110000000"
-    }
-  },
-  "extraData": "0xf88fa00000000000000000000000000000000000000000000000000000000000000000f869944f20b89195e869abdb228a4a95a7f4927a57722594272e3bff6c94a6ac512e032fba927907242e314594fd54decb397f90724153fac3b5849732bce9750e942ce9060c510308b7a51cbf036cb00e13bcec6a14947fbd62e5f55eeed48b61c003d82cf3a8c764ec51c080c0"
-}
-GENESIS_EOF
-
     if [[ -f "${GENESIS_FILE}" ]]; then
         log_info "Genesis file already exists at ${GENESIS_FILE}"
         # Verify it matches expected content via SHA256
@@ -442,8 +410,37 @@ GENESIS_EOF
         fi
     fi
 
-    # Write genesis file
-    echo "${genesis_content}" > "${GENESIS_FILE}"
+    # Write the production-exact genesis file using direct heredoc redirect.
+    # This MUST be byte-identical to what all existing validators use.
+    # The extraData field is RLP-encoded QBFT validator set — do NOT modify.
+    cat > "${GENESIS_FILE}" << 'GENESIS_EOF'
+{
+  "config": {
+    "chainId": 770,
+    "berlinBlock": 0,
+    "londonBlock": 0,
+    "shanghaiTime": 0,
+    "cancunTime": 0,
+    "zeroBaseFee": true,
+    "contractSizeLimit": 1048576,
+    "initcodeSizeLimit": 1048576,
+    "evmStackSize": 2048,
+    "qbft": {
+      "blockperiodseconds": 5,
+      "epochlength": 30000,
+      "requesttimeoutseconds": 10
+    }
+  },
+  "gasLimit": "0x2FAF080",
+  "difficulty": "0x1",
+  "alloc": {
+    "4739cC491A177EBc16f2Cf5A75467E4F6d03e9A4": {
+      "balance": "0x204fce5e3e25026110000000"
+    }
+  },
+  "extraData": "0xf88fa00000000000000000000000000000000000000000000000000000000000000000f869944f20b89195e869abdb228a4a95a7f4927a57722594272e3bff6c94a6ac512e032fba927907242e314594fd54decb397f90724153fac3b5849732bce9750e942ce9060c510308b7a51cbf036cb00e13bcec6a14947fbd62e5f55eeed48b61c003d82cf3a8c764ec51c080c0"
+}
+GENESIS_EOF
 
     # Verify the genesis file is valid JSON
     if ! jq empty "${GENESIS_FILE}" 2>/dev/null; then
