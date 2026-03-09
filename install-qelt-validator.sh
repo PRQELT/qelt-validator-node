@@ -486,7 +486,7 @@ manage_keys() {
         echo -e "    ${YELLOW}2)${NC} Generate a NEW key (the old key will be backed up)"
         echo -e "    ${CYAN}3)${NC} Import your own key"
         echo ""
-        read -r -p "  Choose [1/2/3] (default: 1): " key_choice
+        read -r -p "  Choose [1/2/3] (default: 1): " key_choice < /dev/tty
         key_choice=${key_choice:-1}
 
         case "${key_choice}" in
@@ -519,7 +519,7 @@ manage_keys() {
         echo -e "    ${GREEN}1)${NC} Auto-generate a new key (recommended for most users)"
         echo -e "    ${CYAN}2)${NC} Import your own private key"
         echo ""
-        read -r -p "  Choose [1/2] (default: 1): " key_choice
+        read -r -p "  Choose [1/2] (default: 1): " key_choice < /dev/tty
         key_choice=${key_choice:-1}
 
         case "${key_choice}" in
@@ -576,7 +576,7 @@ _import_key() {
     echo -e "  Enter the hex-encoded private key (64 hex characters, with or without 0x prefix)"
     echo -e "  Or provide the path to an existing key file."
     echo ""
-    read -r -p "  Key or file path: " user_input
+    read -r -p "  Key or file path: " user_input < /dev/tty
 
     if [[ -z "${user_input}" ]]; then
         log_error "No input provided. Aborting."
@@ -678,7 +678,7 @@ configure_service() {
 
     if [[ -z "${public_ip}" ]]; then
         log_warn "Could not auto-detect public IP address."
-        read -r -p "  Enter this server's public IP address: " public_ip
+        read -r -p "  Enter this server's public IP address: " public_ip < /dev/tty
         if [[ -z "${public_ip}" ]]; then
             log_error "A public IP is required for P2P connectivity."
             exit 1
@@ -686,10 +686,10 @@ configure_service() {
     else
         log_ok "Detected public IP: ${public_ip}"
         echo ""
-        read -r -p "  Is this correct? [Y/n]: " ip_confirm
+        read -r -p "  Is this correct? [Y/n]: " ip_confirm < /dev/tty
         ip_confirm=${ip_confirm:-Y}
         if [[ "${ip_confirm}" =~ ^[Nn] ]]; then
-            read -r -p "  Enter the correct public IP: " public_ip
+            read -r -p "  Enter the correct public IP: " public_ip < /dev/tty
         fi
     fi
 
@@ -813,7 +813,7 @@ setup_public_rpc() {
     echo -e "    ${GREEN}1)${NC} No  — validator only, no public RPC (recommended for most)"
     echo -e "    ${CYAN}2)${NC} Yes — set up HTTPS RPC with domain + SSL"
     echo ""
-    read -r -p "  Choose [1/2] (default: 1): " rpc_choice
+    read -r -p "  Choose [1/2] (default: 1): " rpc_choice < /dev/tty
     rpc_choice=${rpc_choice:-1}
 
     if [[ "${rpc_choice}" != "2" ]]; then
@@ -822,14 +822,14 @@ setup_public_rpc() {
     fi
 
     echo ""
-    read -r -p "  Enter your domain name (e.g. mynode.example.com): " domain_name
+    read -r -p "  Enter your domain name (e.g. mynode.example.com): " domain_name < /dev/tty
 
     if [[ -z "${domain_name}" ]]; then
         log_error "No domain provided. Skipping public RPC setup."
         return 0
     fi
 
-    read -r -p "  Enter email for Let's Encrypt certificate notifications: " cert_email
+    read -r -p "  Enter email for Let's Encrypt certificate notifications: " cert_email < /dev/tty
     cert_email=${cert_email:-"admin@${domain_name}"}
 
     # Mark public RPC enabled for firewall step
@@ -1259,7 +1259,7 @@ configure_firewall() {
             echo -e "    - Allow 443/tcp (HTTPS — public RPC endpoint)"
         fi
         echo ""
-        read -r -p "  Configure firewall? [Y/n]: " fw_choice
+        read -r -p "  Configure firewall? [Y/n]: " fw_choice < /dev/tty
         fw_choice=${fw_choice:-Y}
 
         if [[ "${fw_choice}" =~ ^[Yy] ]]; then
@@ -1519,7 +1519,7 @@ main() {
     echo -e "  It installs: Java 21, Hyperledger Besu ${BESU_VERSION}, and configures"
     echo -e "  the node to connect to the QELT network."
     echo ""
-    read -r -p "  Continue? [Y/n]: " confirm
+    read -r -p "  Continue? [Y/n]: " confirm < /dev/tty
     confirm=${confirm:-Y}
     if [[ ! "${confirm}" =~ ^[Yy] ]]; then
         echo "  Aborted."
