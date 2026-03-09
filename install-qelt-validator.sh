@@ -621,46 +621,46 @@ _display_identity() {
 
     log_info "Extracting validator identity from key..."
 
-    # Use temp files to avoid pipe/stdin issues with the JVM.
-    # Besu writes the address/key to stdout, logs to stderr.
-    local tmp_addr="/tmp/qelt_addr_$$.txt"
-    local tmp_pubkey="/tmp/qelt_pubkey_$$.txt"
+    # Use temp files and capture ALL output (stdout + stderr) because Besu's
+    # JVM writes ANSI log lines that may go to either stream depending on
+    # terminal detection. Then grep for the 0x address pattern.
+    local tmp_out="/tmp/qelt_besu_out_$$.txt"
 
-    # Extract validator address
+    # Extract validator address — capture everything
+    local validator_address=""
     "${BESU_INSTALL_DIR}/bin/besu" public-key export-address \
         --node-private-key-file="${nodekey_file}" \
-        > "${tmp_addr}" 2>/dev/null || true
+        > "${tmp_out}" 2>&1 || true
 
-    # Extract public key
+    # The address is a short 0x line (42 chars: 0x + 40 hex). Find it.
+    if [[ -f "${tmp_out}" ]]; then
+        validator_address=$(grep -oE '0x[0-9a-fA-F]{40}' "${tmp_out}" | head -1 || true)
+    fi
+
+    # Extract public key — capture everything
+    local public_key=""
     "${BESU_INSTALL_DIR}/bin/besu" public-key export \
         --node-private-key-file="${nodekey_file}" \
-        > "${tmp_pubkey}" 2>/dev/null || true
+        > "${tmp_out}" 2>&1 || true
 
-    # Read results — the address/key is the last line of the file
-    local validator_address=""
-    if [[ -f "${tmp_addr}" ]]; then
-        validator_address=$(tail -1 "${tmp_addr}" | tr -d '[:space:]')
-    fi
-    local public_key=""
-    if [[ -f "${tmp_pubkey}" ]]; then
-        public_key=$(tail -1 "${tmp_pubkey}" | tr -d '[:space:]')
+    # The public key is a long 0x line (130 chars: 0x + 128 hex). Find it.
+    if [[ -f "${tmp_out}" ]]; then
+        public_key=$(grep -oE '0x[0-9a-fA-F]{128}' "${tmp_out}" | head -1 || true)
     fi
 
     # Cleanup temp files
-    rm -f "${tmp_addr}" "${tmp_pubkey}"
+    rm -f "${tmp_out}"
 
-    if [[ -z "${validator_address}" || ! "${validator_address}" =~ ^0x ]]; then
+    if [[ -z "${validator_address}" ]]; then
         log_warn "Could not extract validator address from key."
         log_warn "Retrieve it manually with:"
         log_warn "  besu public-key export-address --node-private-key-file=${nodekey_file}"
-        validator_address=""
     else
         log_ok "Validator address: ${validator_address}"
     fi
 
-    if [[ -z "${public_key}" || ! "${public_key}" =~ ^0x ]]; then
+    if [[ -z "${public_key}" ]]; then
         log_warn "Could not extract public key."
-        public_key=""
     else
         log_ok "Public key extracted"
     fi
