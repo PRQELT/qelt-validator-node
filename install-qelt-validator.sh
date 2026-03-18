@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ###############################################################################
 #                    QELT Mainnet — Validator Node Installer                  #
-#                           v2.5.0 — Production Hardened                      #
+#                           v2.6.0 — Production Hardened                      #
 #                                                                             #
 #  One-command installer for new QELT QBFT validators.                        #
 #  Target OS: Ubuntu 22.04 / 24.04 LTS (x86_64)                              #
@@ -28,7 +28,7 @@ IFS=$'\n\t'
 # =============================================================================
 # CONSTANTS — Network-specific, pinned to QELT Mainnet production
 # =============================================================================
-readonly SCRIPT_VERSION="2.5.0"
+readonly SCRIPT_VERSION="2.6.0"
 readonly CHAIN_ID=770
 readonly NETWORK_NAME="QELT Mainnet"
 
@@ -655,15 +655,83 @@ _import_key() {
 }
 
 _display_identity() {
-    # NOTE: Besu writes everything (logs + result) to stderr when not in a tty.
-    # This makes reliable CLI-based extraction fragile across JVM versions.
-    # Identity is now extracted authoritatively from the RUNNING NODE via RPC
-    # in extract_node_identity_from_rpc() called after startup.
-    # This function initialises the storage files with empty placeholders only.
-    log_info "Validator identity will be confirmed from running node after startup..."
-    echo "" > "${DATA_DIR}/.validator_address"
-    echo "" > "${DATA_DIR}/.public_key"
+    local nodekey_file="$1"
+
+    log_info "Extracting validator identity from key..."
+
+    # Use --to=<file> to write the address directly to disk.
+    # This bypasses all stdout/stderr routing issues caused by the JVM logging
+    # framework (Log4j2) competing with Picocli's output on the same stream.
+    # --logging=OFF suppresses all INFO lines so the file gets only the address.
+    local addr_file
+    addr_file=$(mktemp /tmp/qelt-addr-XXXXXX)
+    local pubkey_file
+    pubkey_file=$(mktemp /tmp/qelt-pubkey-XXXXXX)
+
+    local validator_address=""
+    if "${BESU_INSTALL_DIR}/bin/besu" --logging=OFF public-key export-address \
+            --node-private-key-file="${nodekey_file}" \
+            --to="${addr_file}" 2>/dev/null \
+        && [[ -s "${addr_file}" ]]; then
+        validator_address=$(tr -d '[:space:]' < "${addr_file}")
+    fi
+
+    # Fallback: merge stdout+stderr and grep for exact 42-char address line
+    if ! echo "${validator_address}" | grep -qE '^0x[0-9a-fA-F]{40}$'; then
+        validator_address=$(
+            "${BESU_INSTALL_DIR}/bin/besu" --logging=OFF public-key export-address \
+                --node-private-key-file="${nodekey_file}" 2>&1 \
+            | tr -d '\r' \
+            | grep -E '^0x[0-9a-fA-F]{40}$' \
+            | head -1 \
+            | tr -d '[:space:]' \
+            || true
+        )
+    fi
+
+    local public_key=""
+    if "${BESU_INSTALL_DIR}/bin/besu" --logging=OFF public-key export \
+            --node-private-key-file="${nodekey_file}" \
+            --to="${pubkey_file}" 2>/dev/null \
+        && [[ -s "${pubkey_file}" ]]; then
+        public_key=$(tr -d '[:space:]' < "${pubkey_file}")
+    fi
+
+    rm -f "${addr_file}" "${pubkey_file}"
+
+    if [[ -n "${validator_address}" ]] && echo "${validator_address}" | grep -qE '^0x[0-9a-fA-F]{40}$'; then
+        log_ok "Validator address: ${validator_address}"
+    else
+        log_warn "Could not extract validator address from key."
+        log_warn "Retrieve it manually after install:"
+        log_warn "  besu public-key export-address --node-private-key-file=${nodekey_file} --to=/tmp/addr.txt && cat /tmp/addr.txt"
+        validator_address=""
+    fi
+
+    if echo "${public_key}" | grep -qE '^0x[0-9a-fA-F]{128}$'; then
+        log_ok "Public key extracted"
+    else
+        public_key=""
+    fi
+
+    local pubkey_hex="${public_key#0x}"
+
+    echo "${validator_address}" > "${DATA_DIR}/.validator_address"
+    echo "${pubkey_hex}" > "${DATA_DIR}/.public_key"
     echo "" > "${DATA_DIR}/.enode_url"
+
+    echo -e "  ${BOLD}╔══════════════════════════════════════════════════════════╗${NC}"
+    echo -e "  ${BOLD}║           YOUR VALIDATOR IDENTITY                       ║${NC}"
+    echo -e "  ${BOLD}╠══════════════════════════════════════════════════════════╣${NC}"
+    if [[ -n "${validator_address}" ]]; then
+        echo -e "  ${BOLD}║${NC} Validator Address: ${GREEN}${validator_address}${NC}"
+    else
+        echo -e "  ${BOLD}║${NC} ${RED}Address: NOT RESOLVED — retrieve manually (see warnings above)${NC}"
+    fi
+    echo -e "  ${BOLD}║${NC}"
+    echo -e "  ${BOLD}║${NC} ${YELLOW}⚠  SAVE THIS ADDRESS — you will need it to request${NC}"
+    echo -e "  ${BOLD}║${NC} ${YELLOW}   admission to the QELT validator set.${NC}"
+    echo -e "  ${BOLD}╚══════════════════════════════════════════════════════════╝${NC}"
 }
 
 # =============================================================================
