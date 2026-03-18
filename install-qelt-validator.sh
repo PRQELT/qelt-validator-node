@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ###############################################################################
 #                    QELT Mainnet — Validator Node Installer                  #
-#                           v2.3.0 — Production Hardened                      #
+#                           v2.4.0 — Production Hardened                      #
 #                                                                             #
 #  One-command installer for new QELT QBFT validators.                        #
 #  Target OS: Ubuntu 22.04 / 24.04 LTS (x86_64)                              #
@@ -28,7 +28,7 @@ IFS=$'\n\t'
 # =============================================================================
 # CONSTANTS — Network-specific, pinned to QELT Mainnet production
 # =============================================================================
-readonly SCRIPT_VERSION="2.3.0"
+readonly SCRIPT_VERSION="2.4.0"
 readonly CHAIN_ID=770
 readonly NETWORK_NAME="QELT Mainnet"
 
@@ -659,40 +659,48 @@ _display_identity() {
 
     log_info "Extracting validator identity from key..."
 
-    # Use temp files and capture ALL output (stdout + stderr) because Besu's
-    # JVM writes ANSI log lines that may go to either stream depending on
-    # terminal detection. Then grep for the 0x address pattern.
-    local tmp_out="/tmp/qelt_besu_out_$$.txt"
+    # Besu writes INFO log lines to stderr and the actual result to stdout.
+    # We capture stdout and stderr into SEPARATE files so grep anchors work correctly.
+    # Merging them with 2>&1 caused the address to be undetectable when the 128-char
+    # public key log line appeared before the 40-char address line in the combined file.
+    local tmp_stdout="/tmp/qelt_stdout_$$.txt"
+    local tmp_stderr="/tmp/qelt_stderr_$$.txt"
 
-    # Extract validator address — capture everything
+    # ── Validator address ──────────────────────────────────────────────────────
     local validator_address=""
     "${BESU_INSTALL_DIR}/bin/besu" public-key export-address \
         --node-private-key-file="${nodekey_file}" \
-        > "${tmp_out}" 2>&1 || true
+        > "${tmp_stdout}" 2> "${tmp_stderr}" || true
 
-    # The address is printed on its OWN line: exactly "0x" + 40 hex chars, nothing else.
-    # CRITICAL: We MUST use a full-line anchor to avoid matching the first 40 chars of the
-    # 128-char public key that Besu logs on the line ABOVE the address:
-    #   "Loaded public key 0x<128hex>"   ← wrong — first 40 chars look like an address
-    #   "0x<40hex>"                       ← correct — this is the actual address line
-    # We strip \r first because Besu JVM may emit CRLF line endings which break $ anchors.
-    if [[ -f "${tmp_out}" ]]; then
-        validator_address=$(tr -d '\r' < "${tmp_out}" | grep -E '^0x[0-9a-fA-F]{40}$' | head -1 | tr -d '[:space:]' || true)
+    # stdout contains ONLY the address (Besu result) — strip all whitespace
+    validator_address=$(tr -d '[:space:]' < "${tmp_stdout}" 2>/dev/null || true)
+
+    # Validate: must be exactly 0x + 40 hex chars
+    if ! echo "${validator_address}" | grep -qE '^0x[0-9a-fA-F]{40}$'; then
+        # Fallback: search stderr in case this JVM version writes result there too
+        validator_address=$(tr -d '\r' < "${tmp_stderr}" \
+            | grep -E '^0x[0-9a-fA-F]{40}$' | head -1 | tr -d ' \t' || true)
     fi
 
-    # Extract public key — capture everything
+    rm -f "${tmp_stdout}" "${tmp_stderr}"
+
+    # ── Public key ─────────────────────────────────────────────────────────────
     local public_key=""
     "${BESU_INSTALL_DIR}/bin/besu" public-key export \
         --node-private-key-file="${nodekey_file}" \
-        > "${tmp_out}" 2>&1 || true
+        > "${tmp_stdout}" 2> "${tmp_stderr}" || true
 
-    # The public key is a long 0x line (130 chars: 0x + 128 hex). Find it.
-    if [[ -f "${tmp_out}" ]]; then
-        public_key=$(grep -oE '0x[0-9a-fA-F]{128}' "${tmp_out}" | head -1 || true)
+    # stdout contains ONLY the public key — strip all whitespace
+    public_key=$(tr -d '[:space:]' < "${tmp_stdout}" 2>/dev/null || true)
+
+    # Validate: must be exactly 0x + 128 hex chars
+    if ! echo "${public_key}" | grep -qE '^0x[0-9a-fA-F]{128}$'; then
+        # Fallback: search stderr
+        public_key=$(tr -d '\r' < "${tmp_stderr}" \
+            | grep -oE '0x[0-9a-fA-F]{128}' | head -1 || true)
     fi
 
-    # Cleanup temp files
-    rm -f "${tmp_out}"
+    rm -f "${tmp_stdout}" "${tmp_stderr}"
 
     if [[ -z "${validator_address}" ]]; then
         log_warn "Could not extract validator address from key."
@@ -1585,6 +1593,16 @@ print_summary() {
     echo -e "    ${CYAN}echo \"Network: \$(curl -s -X POST --data '{\"jsonrpc\":\"2.0\",\"method\":\"eth_blockNumber\",\"params\":[],\"id\":1}' https://mainnet.qelt.ai | jq -r .result)\"${NC}"
     echo ""
     echo -e "  When both numbers match, you are synced. ${BOLD}Only then send the email below.${NC}"
+    echo ""
+
+    echo -e "  ${RED}${BOLD}⛔  BEFORE YOU SEND THIS EMAIL — VERIFY YOUR ADDRESS FIRST:${NC}"
+    echo ""
+    echo -e "  ${RED}${BOLD}  Run this command and confirm the address matches what is shown below:${NC}"
+    echo ""
+    echo -e "  ${RED}  besu public-key export-address --node-private-key-file=/data/qelt/keys/nodekey${NC}"
+    echo ""
+    echo -e "  ${RED}  DO NOT send the email if the Validator Address field is empty or says PENDING.${NC}"
+    echo -e "  ${RED}  Using the wrong address can halt the entire network.${NC}"
     echo ""
 
     echo -e "  ${BOLD}${GREEN}━━━ COPY THE TEXT BELOW AND EMAIL IT TO: laurent@qxmp.ai ━━━${NC}"
