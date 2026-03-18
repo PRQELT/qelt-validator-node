@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ###############################################################################
 #                    QELT Mainnet — Validator Node Installer                  #
-#                           v2.1.0 — Production Hardened                      #
+#                           v2.2.0 — Production Hardened                      #
 #                                                                             #
 #  One-command installer for new QELT QBFT validators.                        #
 #  Target OS: Ubuntu 22.04 / 24.04 LTS (x86_64)                              #
@@ -28,7 +28,7 @@ IFS=$'\n\t'
 # =============================================================================
 # CONSTANTS — Network-specific, pinned to QELT Mainnet production
 # =============================================================================
-readonly SCRIPT_VERSION="2.1.0"
+readonly SCRIPT_VERSION="2.2.0"
 readonly CHAIN_ID=770
 readonly NETWORK_NAME="QELT Mainnet"
 
@@ -670,9 +670,13 @@ _display_identity() {
         --node-private-key-file="${nodekey_file}" \
         > "${tmp_out}" 2>&1 || true
 
-    # The address is a short 0x line (42 chars: 0x + 40 hex). Find it.
+    # The address is printed on its OWN line: exactly "0x" + 40 hex chars, nothing else.
+    # CRITICAL: We MUST use a full-line anchor (^0x[hex]{40}$) — NOT grep -oE — to avoid
+    # matching the first 40 chars of the 128-char public key that Besu logs on the line
+    # ABOVE the address ("Loaded public key 0x<128hex>"). Using -oE without anchors would
+    # extract the wrong value and cause the same bug that triggered the 2026-03-18 chain halt.
     if [[ -f "${tmp_out}" ]]; then
-        validator_address=$(grep -oE '0x[0-9a-fA-F]{40}' "${tmp_out}" | head -1 || true)
+        validator_address=$(grep -E '^0x[0-9a-fA-F]{40}$' "${tmp_out}" | head -1 | tr -d '[:space:]' || true)
     fi
 
     # Extract public key — capture everything
