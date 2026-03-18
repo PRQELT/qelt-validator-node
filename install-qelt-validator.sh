@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ###############################################################################
 #                    QELT Mainnet — Validator Node Installer                  #
-#                           v2.6.0 — Production Hardened                      #
+#                           v2.7.0 — Production Hardened                      #
 #                                                                             #
 #  One-command installer for new QELT QBFT validators.                        #
 #  Target OS: Ubuntu 22.04 / 24.04 LTS (x86_64)                              #
@@ -28,7 +28,7 @@ IFS=$'\n\t'
 # =============================================================================
 # CONSTANTS — Network-specific, pinned to QELT Mainnet production
 # =============================================================================
-readonly SCRIPT_VERSION="2.6.0"
+readonly SCRIPT_VERSION="2.7.0"
 readonly CHAIN_ID=770
 readonly NETWORK_NAME="QELT Mainnet"
 
@@ -800,10 +800,16 @@ extract_node_identity_from_rpc() {
         enode_url=""
     fi
 
-    # Store confirmed values (overwrite the placeholders set by _display_identity)
-    echo "${validator_address}" > "${DATA_DIR}/.validator_address"
-    echo "${pubkey_hex}" > "${DATA_DIR}/.public_key"
-    echo "${enode_url}" > "${DATA_DIR}/.enode_url"
+    # Only write address/pubkey if we resolved a valid value — preserve what
+    # _display_identity() already wrote via --to=<file> if RPC extraction failed.
+    if echo "${validator_address}" | grep -qE '^0x[0-9a-fA-F]{40}$'; then
+        echo "${validator_address}" > "${DATA_DIR}/.validator_address"
+        echo "${pubkey_hex}" > "${DATA_DIR}/.public_key"
+    fi
+    # Always write enode URL (only available from running node, not from CLI)
+    if [[ -n "${enode_url}" ]]; then
+        echo "${enode_url}" > "${DATA_DIR}/.enode_url"
+    fi
 
     echo ""
     echo -e "  ${BOLD}╔══════════════════════════════════════════════════════════════╗${NC}"
