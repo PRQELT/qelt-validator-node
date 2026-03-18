@@ -24,8 +24,8 @@ QELT uses **QBFT (Quorum Byzantine Fault Tolerance)** with **block-header valida
 
 | Parameter | Value |
 |-----------|-------|
-| Current validators | 5 |
-| Votes needed to admit | **3 of 5** (strictly more than 50%) |
+| Current validators | 7 |
+| Votes needed to admit | **4 of 7** (strictly more than 50%) |
 | Vote mechanism | `qbft_proposeValidatorVote` JSON-RPC call |
 | When admission activates | When the on-chain vote threshold is met (recorded in block headers) |
 | Epoch length | 30,000 blocks (~41.7 hours) |
@@ -48,7 +48,10 @@ New Operator                      Existing Validators              Blockchain
     │                                     │     Vote in block header  │
     │                    Validator C calls │                           │
     │                    proposeValidatorVote ──────────────────────►  │
-    │                                     │     3/5 threshold met!    │
+    │                                     │                           │
+    │                    Validator D calls │                           │
+    │                    proposeValidatorVote ──────────────────────►  │
+    │                                     │     4/7 threshold met!    │
     │                                     │                           │
     │◄──────────────────── New validator now participates in consensus │
     │                                     │                           │
@@ -193,7 +196,7 @@ Expected response:
 - The vote is **not immediately written to the chain**. It is stored locally and included in the next block that YOUR node proposes.
 - QBFT uses round-robin block proposing, so your vote may take several blocks to appear on-chain.
 - You only need to call `proposeValidatorVote` once. The local proposal persists across epoch boundaries.
-- You need **3 of 5** existing validators to vote for the new address.
+- You need **4 of 7** existing validators to vote for the new address.
 
 ### Step 3: Verify the Vote Passed
 
@@ -287,7 +290,8 @@ QBFT requires **≥ 2/3 of validators** to sign each block. The network can tole
 |:---:|:---:|:---:|---|
 | 5 | 1 | 4 | Adding a 6th that's offline → fault tolerance consumed |
 | 6 | 1 | 4 | Only 1 more failure allowed before network halt |
-| 7 | 2 | 5 | Safer — can tolerate 2 failures |
+| **7** | **2** | **5** | **Current — can tolerate 2 failures** |
+| 8 | 2 | 6 | Adding an 8th that's offline → fault tolerance consumed |
 
 ### Rule: NEVER vote in a node that isn't fully synced and peered
 
@@ -319,7 +323,7 @@ Then: `sudo systemctl daemon-reload && sudo systemctl restart besu-qelt-validato
 ### Vote cast but validator not appearing in set
 
 - Votes are included when your node proposes a block (round-robin). Wait for a few rounds.
-- Check that 3 of 5 validators have actually voted.
+- Check that 4 of 7 validators have actually voted.
 - If an epoch boundary passes before enough votes accumulate in blocks, the unrecorded votes reset — but local proposals persist and will be re-injected in the next epoch.
 
 ### New validator synced but not producing blocks after admission
