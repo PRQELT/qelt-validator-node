@@ -98,7 +98,7 @@ Include:
 
 ### Step 5 — Wait for Admission
 
-The QELT team will coordinate a vote among existing validators. QBFT requires a majority (currently 3 of 5 validators) to vote.
+The QELT team will coordinate a vote among existing validators. QBFT requires a majority (currently 4 of 7 validators) to vote.
 
 **Check if you've been admitted:**
 ```bash
@@ -233,7 +233,7 @@ sudo ufw status | grep 30303     # Check firewall
 ```
 
 ### Sync stuck at block 0
-- Verify genesis file matches: `sha256sum /etc/qelt/genesis.json` should return `fa5b3534...`
+- Verify genesis file: `sha256sum /etc/qelt/genesis.json` — compare with any active validator to confirm match
 - Check bootnode enode URL in service file
 - Ensure outbound + inbound traffic on port 30303
 
