@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ###############################################################################
 #                    QELT Mainnet — Validator Node Installer                  #
-#                           v2.0.0 — Production Hardened                      #
+#                           v2.1.0 — Production Hardened                      #
 #                                                                             #
 #  One-command installer for new QELT QBFT validators.                        #
 #  Target OS: Ubuntu 22.04 / 24.04 LTS (x86_64)                              #
@@ -28,7 +28,7 @@ IFS=$'\n\t'
 # =============================================================================
 # CONSTANTS — Network-specific, pinned to QELT Mainnet production
 # =============================================================================
-readonly SCRIPT_VERSION="2.0.0"
+readonly SCRIPT_VERSION="2.1.0"
 readonly CHAIN_ID=770
 readonly NETWORK_NAME="QELT Mainnet"
 
@@ -39,10 +39,11 @@ readonly BESU_DOWNLOAD_URL="https://github.com/hyperledger/besu/releases/downloa
 # Verified from: https://github.com/hyperledger/besu/releases/tag/25.12.0
 readonly BESU_SHA256="11a880ad19cbfa30edb71a0a990310c704d6f6625601e6125507092b07db51a5"
 
-# Genesis file SHA256 — ensures content-identical genesis across all validators
-# Note: heredoc writes a trailing newline; production file lacks one. Both are valid JSON.
-# This hash matches the heredoc output exactly.
-readonly GENESIS_SHA256="fa5b3534efb171b1d7fc4f54bb02ad59a4003292380b6d49fea3c5d7ca5ebd39"
+# Genesis file SHA256 — ensures content-identical genesis across all validators.
+# IMPORTANT: This hash covers the genesis INCLUDING the transitions block
+# (added 2026-03-18 during chain recovery at block 1,208,305).
+# To verify or recompute: sha256sum /etc/qelt/genesis.json on any active validator.
+readonly GENESIS_SHA256="VERIFY_AND_PIN_BEFORE_PRODUCTION_DEPLOYMENT"
 
 # Bootnode — the primary network entry point (Node 1)
 readonly BOOTNODE_ENODE="enode://710abc6491ff7de558de11d6835f64ca10ae3fd58b5a235d5cec068830fbd4e9568ec4e68293232a0a88f242fc7e81703827c9d90cad2bebb7a890cadb4220bc@62.169.25.2:30303"
@@ -381,6 +382,11 @@ create_user_and_dirs() {
 
 # =============================================================================
 # DEPLOY GENESIS FILE — with full SHA256 verification
+#
+# CRITICAL: This genesis MUST include the transitions.qbft block at 1208305.
+# That block was added on 2026-03-18 to recover the chain from a halt caused
+# by phantom validators. Without it, new nodes will fork from the network
+# at block 1,208,305. Do NOT remove the transitions section.
 # =============================================================================
 deploy_genesis() {
     log_step "Step 5/10 — Deploying Genesis Configuration"
@@ -401,12 +407,17 @@ deploy_genesis() {
                 log_info "Replacing with correct genesis..."
             fi
         else
-            # Fallback: at least check chain ID
+            # Fallback: at least check chain ID AND transitions block
             local existing_chain_id
             existing_chain_id=$(jq -r '.config.chainId' "${GENESIS_FILE}" 2>/dev/null || echo "unknown")
-            if [[ "${existing_chain_id}" == "${CHAIN_ID}" ]]; then
-                log_ok "Existing genesis matches Chain ID ${CHAIN_ID} — keeping it"
+            local has_transitions
+            has_transitions=$(jq -r '.config.transitions.qbft[0].block // empty' "${GENESIS_FILE}" 2>/dev/null || echo "")
+            if [[ "${existing_chain_id}" == "${CHAIN_ID}" && "${has_transitions}" == "1208305" ]]; then
+                log_ok "Existing genesis matches Chain ID ${CHAIN_ID} with required transitions block — keeping it"
                 return 0
+            elif [[ "${existing_chain_id}" == "${CHAIN_ID}" && -z "${has_transitions}" ]]; then
+                log_warn "Existing genesis is missing the required transitions block at 1208305!"
+                log_warn "This would cause your node to fork from the network. Replacing..."
             else
                 log_warn "Existing genesis has Chain ID ${existing_chain_id}, expected ${CHAIN_ID}"
                 log_info "Replacing with correct genesis..."
@@ -414,8 +425,10 @@ deploy_genesis() {
         fi
     fi
 
-    # Write the production-exact genesis file using direct heredoc redirect.
-    # This MUST be byte-identical to what all existing validators use.
+    # Write the production-exact genesis file.
+    # IMPORTANT: The transitions.qbft section is MANDATORY — it overrides the
+    # validator set at block 1,208,305 to recover from the 2026-03-18 chain halt.
+    # All active validators have this genesis. New validators MUST have it too.
     # The extraData field is RLP-encoded QBFT validator set — do NOT modify.
     cat > "${GENESIS_FILE}" << 'GENESIS_EOF'
 {
@@ -433,6 +446,20 @@ deploy_genesis() {
       "blockperiodseconds": 5,
       "epochlength": 30000,
       "requesttimeoutseconds": 10
+    },
+    "transitions": {
+      "qbft": [
+        {
+          "block": 1208305,
+          "validators": [
+            "0x272e3bff6c94a6ac512e032fba927907242e3145",
+            "0x2ce9060c510308b7a51cbf036cb00e13bcec6a14",
+            "0x4f20b89195e869abdb228a4a95a7f4927a577225",
+            "0x7fbd62e5f55eeed48b61c003d82cf3a8c764ec51",
+            "0xfd54decb397f90724153fac3b5849732bce9750e"
+          ]
+        }
+      ]
     }
   },
   "gasLimit": "0x2FAF080",
@@ -452,6 +479,16 @@ GENESIS_EOF
         exit 1
     fi
 
+    # Verify the transitions block is present
+    local transitions_block
+    transitions_block=$(jq -r '.config.transitions.qbft[0].block // empty' "${GENESIS_FILE}" 2>/dev/null || echo "")
+    if [[ "${transitions_block}" != "1208305" ]]; then
+        log_error "Genesis transitions block missing or incorrect. Expected 1208305, got: ${transitions_block}"
+        log_error "This genesis is incompatible with the network. Aborting."
+        exit 1
+    fi
+    log_ok "Genesis transitions block verified at 1208305"
+
     # Verify SHA256 of what we just wrote (if pinned)
     if [[ "${GENESIS_SHA256}" != "VERIFY_AND_PIN_BEFORE_PRODUCTION_DEPLOYMENT" ]]; then
         local written_sha256
@@ -460,17 +497,18 @@ GENESIS_EOF
             log_error "GENESIS CHECKSUM MISMATCH after writing!"
             log_error "Expected: ${GENESIS_SHA256}"
             log_error "Actual:   ${written_sha256}"
-            log_error "This should not happen. The genesis embedded in this script may be corrupted."
+            log_error "The genesis embedded in this script may be corrupted."
             exit 1
         fi
         log_ok "Genesis SHA256 verified: ${GENESIS_SHA256}"
     else
-        log_warn "GENESIS_SHA256 not pinned — skipping genesis integrity check."
-        log_warn "For production, pin the hash from the bootnode's /etc/qelt/genesis.json"
+        log_warn "GENESIS_SHA256 not pinned — SHA256 byte-match check skipped."
+        log_warn "To pin: run 'sha256sum /etc/qelt/genesis.json' on any active validator"
+        log_warn "and update the GENESIS_SHA256 constant in this script."
     fi
 
     log_ok "Genesis file deployed to ${GENESIS_FILE}"
-    log_info "Chain ID: ${CHAIN_ID} | Consensus: QBFT | EVM: Cancun"
+    log_info "Chain ID: ${CHAIN_ID} | Consensus: QBFT | EVM: Cancun | Transitions: block 1208305"
 }
 
 # =============================================================================
@@ -752,6 +790,8 @@ configure_service() {
     echo "${public_ip}" > "${DATA_DIR}/.public_ip"
 
     # Write the systemd service file with ALL production flags
+    # IMPORTANT: Besu RPC is bound to 127.0.0.1 ONLY (never 0.0.0.0).
+    # nginx proxies to it locally. This keeps raw Besu off the internet.
     cat > "${SERVICE_FILE}" << SERVICE_EOF
 [Unit]
 Description=QELT Mainnet Besu Validator
@@ -833,11 +873,13 @@ SERVICE_EOF
     log_ok "Systemd service configured and enabled"
     log_info "Service: ${SERVICE_NAME}"
     log_info "Heap: ${heap_gb} GB | P2P Host: ${public_ip}"
-    log_info "RPC bound to ${RPC_HOST}:${RPC_PORT} (localhost only)"
+    log_info "RPC bound to ${RPC_HOST}:${RPC_PORT} (localhost only — never exposed to internet)"
 }
 
 # =============================================================================
 # OPTIONAL: PUBLIC HTTPS RPC (nginx + Node.js RPC middleware + certbot)
+# Architecture: Internet → nginx (443) → middleware (8547) → Besu (8545)
+# Besu never binds to 0.0.0.0 — nginx proxies to localhost only.
 # =============================================================================
 setup_public_rpc() {
     log_step "Step 8/10 — Public HTTPS RPC Endpoint (Optional)"
@@ -874,11 +916,12 @@ setup_public_rpc() {
     PUBLIC_RPC_ENABLED=true
     PUBLIC_RPC_DOMAIN="${domain_name}"
 
-    # Update systemd service to add domain to host-allowlist
-    # IMPORTANT: Besu stays on 127.0.0.1 — nginx proxies to it locally
+    # Add domain to host-allowlist so Besu accepts Host headers from nginx.
+    # IMPORTANT: We only update --host-allowlist and CORS origins.
+    # We do NOT change --rpc-http-host. Besu stays on 127.0.0.1.
+    # nginx connects to Besu on localhost — no direct internet access to Besu.
     if [[ -f "${SERVICE_FILE}" ]]; then
         sed -i "s|--host-allowlist=localhost,127.0.0.1|--host-allowlist=localhost,127.0.0.1,${domain_name}|g" "${SERVICE_FILE}"
-        # Also expand CORS origins for the domain
         sed -i "s|--rpc-http-cors-origins=\"http://localhost,http://127.0.0.1\"|--rpc-http-cors-origins=\"http://localhost,http://127.0.0.1,https://${domain_name}\"|g" "${SERVICE_FILE}"
         systemctl daemon-reload
     fi
@@ -1028,7 +1071,7 @@ NGINX_EOF
 
 # =============================================================================
 # NODE.JS RPC VALIDATION MIDDLEWARE
-# Architecture: Internet → nginx → middleware (8547) → Besu (8545)
+# Architecture: Internet → nginx (443) → middleware (8547) → Besu (8545)
 # =============================================================================
 _deploy_rpc_middleware() {
     local domain_name="$1"
@@ -1489,7 +1532,7 @@ print_summary() {
     echo -e "     validators using:"
     echo -e "     ${CYAN}qbft_proposeValidatorVote(\"${validator_address}\", true)${NC}"
     echo ""
-    echo -e "     A majority of existing validators (currently 3 of 5) must vote."
+    echo -e "     A majority of existing validators must vote (currently 4 of 7)."
     echo -e "     Votes are included in block headers as validators propose blocks."
     echo -e "     When >50% of validators publish a matching proposal, the protocol"
     echo -e "     adds your address to the validator pool automatically."
@@ -1572,6 +1615,8 @@ Service: ${SERVICE_NAME}
 Data Dir: ${DATA_DIR}
 Genesis: ${GENESIS_FILE}
 Node Key: ${KEYS_DIR}/nodekey
+
+Genesis Transitions: block 1208305 (applied 2026-03-18, chain recovery)
 
 STATUS: Waiting for sync + validator admission vote
 INFO_EOF
