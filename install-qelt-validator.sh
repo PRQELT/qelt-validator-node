@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 ###############################################################################
 #                    QELT Mainnet — Validator Node Installer                  #
-#                           v2.7.0 — Production Hardened                      #
+#                           v2.8.0 — Production Hardened                      #
 #                                                                             #
 #  One-command installer for new QELT QBFT validators.                        #
 #  Target OS: Ubuntu 22.04 / 24.04 LTS (x86_64)                              #
@@ -28,7 +28,7 @@ IFS=$'\n\t'
 # =============================================================================
 # CONSTANTS — Network-specific, pinned to QELT Mainnet production
 # =============================================================================
-readonly SCRIPT_VERSION="2.7.0"
+readonly SCRIPT_VERSION="2.8.0"
 readonly CHAIN_ID=770
 readonly NETWORK_NAME="QELT Mainnet"
 
@@ -669,9 +669,12 @@ _display_identity() {
     pubkey_file=$(mktemp /tmp/qelt-pubkey-XXXXXX)
 
     local validator_address=""
+    # Redirect BOTH stdout and stderr to /dev/null — Log4j writes INFO lines
+    # to stdout (SYSTEM_OUT is the Log4j Console appender default), so 2>/dev/null
+    # alone is not enough. The address goes to --to=<file>, not stdout.
     if "${BESU_INSTALL_DIR}/bin/besu" --logging=OFF public-key export-address \
             --node-private-key-file="${nodekey_file}" \
-            --to="${addr_file}" 2>/dev/null \
+            --to="${addr_file}" > /dev/null 2>&1 \
         && [[ -s "${addr_file}" ]]; then
         validator_address=$(tr -d '[:space:]' < "${addr_file}")
     fi
@@ -692,7 +695,7 @@ _display_identity() {
     local public_key=""
     if "${BESU_INSTALL_DIR}/bin/besu" --logging=OFF public-key export \
             --node-private-key-file="${nodekey_file}" \
-            --to="${pubkey_file}" 2>/dev/null \
+            --to="${pubkey_file}" > /dev/null 2>&1 \
         && [[ -s "${pubkey_file}" ]]; then
         public_key=$(tr -d '[:space:]' < "${pubkey_file}")
     fi
@@ -742,47 +745,14 @@ _display_identity() {
 # Both methods are in the already-enabled ETH,NET api set.
 # =============================================================================
 extract_node_identity_from_rpc() {
-    log_info "Waiting 30 seconds for node identity to stabilise..."
-    sleep 30
+    # eth_coinbase was removed in Besu 25.10.0 — do not attempt address lookup here.
+    # Address is already correctly written by _display_identity() via --to=<file>.
+    # This function only fetches the enode URL from the running node (not available
+    # from CLI) and silently stores it for use in print_summary().
+    log_info "Fetching enode URL from running node..."
+    sleep 10
 
-    local validator_address=""
     local enode_url=""
-    local pubkey_hex=""
-
-    # ── Validator address via eth_coinbase ─────────────────────────────────────
-    # In Besu QBFT, eth_coinbase returns the node's signing (validator) address.
-    local coinbase_response
-    coinbase_response=$(curl -sf --max-time 10 -X POST \
-        -H "Content-Type: application/json" \
-        --data '{"jsonrpc":"2.0","method":"eth_coinbase","params":[],"id":1}' \
-        "http://${RPC_HOST}:${RPC_PORT}" 2>/dev/null || echo "")
-
-    validator_address=$(echo "${coinbase_response}" | jq -r '.result // empty' 2>/dev/null || true)
-
-    if [[ -n "${validator_address}" && "${validator_address}" != "null" ]] \
-        && echo "${validator_address}" | grep -qE '^0x[0-9a-fA-F]{40}$'; then
-        log_ok "Validator address confirmed: ${validator_address}"
-    else
-        log_warn "eth_coinbase returned no valid address — trying besu CLI fallback..."
-        # Final fallback: merge stdout+stderr and grep for exact address line
-        validator_address=$(
-            "${BESU_INSTALL_DIR}/bin/besu" public-key export-address \
-                --node-private-key-file="${KEYS_DIR}/nodekey" 2>&1 \
-            | tr -d '\r' \
-            | grep -E '^0x[0-9a-fA-F]{40}$' \
-            | head -1 \
-            | tr -d '[:space:]' \
-            || true
-        )
-        if [[ -n "${validator_address}" ]]; then
-            log_ok "Validator address (CLI): ${validator_address}"
-        else
-            log_warn "Could not auto-extract address. Run manually after install:"
-            log_warn "  besu public-key export-address --node-private-key-file=${KEYS_DIR}/nodekey"
-        fi
-    fi
-
-    # ── Enode URL via net_enode ────────────────────────────────────────────────
     local enode_response
     enode_response=$(curl -sf --max-time 10 -X POST \
         -H "Content-Type: application/json" \
@@ -792,42 +762,11 @@ extract_node_identity_from_rpc() {
     enode_url=$(echo "${enode_response}" | jq -r '.result // empty' 2>/dev/null || true)
 
     if [[ -n "${enode_url}" && "${enode_url}" != "null" ]]; then
-        # Extract public key hex from enode://PUBKEY@IP:PORT
-        pubkey_hex=$(echo "${enode_url}" | sed 's|enode://||' | cut -d'@' -f1)
-        log_ok "Enode URL confirmed"
-    else
-        log_warn "net_enode returned no value — enode URL unavailable via RPC"
-        enode_url=""
-    fi
-
-    # Only write address/pubkey if we resolved a valid value — preserve what
-    # _display_identity() already wrote via --to=<file> if RPC extraction failed.
-    if echo "${validator_address}" | grep -qE '^0x[0-9a-fA-F]{40}$'; then
-        echo "${validator_address}" > "${DATA_DIR}/.validator_address"
-        echo "${pubkey_hex}" > "${DATA_DIR}/.public_key"
-    fi
-    # Always write enode URL (only available from running node, not from CLI)
-    if [[ -n "${enode_url}" ]]; then
         echo "${enode_url}" > "${DATA_DIR}/.enode_url"
-    fi
-
-    echo ""
-    echo -e "  ${BOLD}╔══════════════════════════════════════════════════════════════╗${NC}"
-    echo -e "  ${BOLD}║              YOUR VALIDATOR IDENTITY                        ║${NC}"
-    echo -e "  ${BOLD}╠══════════════════════════════════════════════════════════════╣${NC}"
-    if [[ -n "${validator_address}" ]]; then
-        echo -e "  ${BOLD}║${NC} ${BOLD}Address:${NC} ${GREEN}${validator_address}${NC}"
+        log_ok "Enode URL: ${enode_url}"
     else
-        echo -e "  ${BOLD}║${NC} ${RED}Address: NOT RESOLVED — run besu public-key export-address manually${NC}"
+        log_warn "Could not fetch enode URL from RPC — will build from public key if available"
     fi
-    echo -e "  ${BOLD}║${NC}"
-    if [[ -n "${enode_url}" ]]; then
-        echo -e "  ${BOLD}║${NC} ${BOLD}Enode:${NC}   ${CYAN}${enode_url}${NC}"
-    fi
-    echo -e "  ${BOLD}║${NC}"
-    echo -e "  ${BOLD}║${NC} ${YELLOW}⚠  SAVE THIS ADDRESS — you will need it to request${NC}"
-    echo -e "  ${BOLD}║${NC} ${YELLOW}   admission to the QELT validator set.${NC}"
-    echo -e "  ${BOLD}╚══════════════════════════════════════════════════════════════╝${NC}"
 }
 
 # =============================================================================
